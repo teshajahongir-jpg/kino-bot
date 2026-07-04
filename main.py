@@ -1,232 +1,147 @@
 import logging
 import sqlite3
-import os
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    filters, ContextTypes
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    MessageHandler,
+    filters,
 )
 
-BOT_TOKEN = "8811167886:AAHN2AigN919e-y63G8QQHKL_UiOeL1F3Mc"
-GURUH_ID = -1004321288260
-ADMIN_ID = 8252424738
+# ==== SOZLAMALAR (shu 3 ta qatorni o'zgartiring) ====
+BOT_TOKEN = "8811167886:AAHAwge8-d5IKWEi_yvXI2-_DRlYUV-afZY"        # @BotFather bergan token
+ADMIN_IDS = [8252424738]                     # sizning Telegram ID (@userinfobot dan)
+CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan)
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinolar.db")
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
+# ==== BAZA ====
+conn = sqlite3.connect("movies.db", check_same_thread=False)
+cur = conn.cursor()
+cur.execute("""
+CREATE TABLE IF NOT EXISTS movies (
+    code INTEGER PRIMARY KEY,
+    message_id INTEGER NOT NULL
+)
+""")
+conn.commit()
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS kinolar (
-            id INTEGER PRIMARY KEY,
-            raqam INTEGER UNIQUE,
-            nomi TEXT,
-            file_id TEXT,
-            file_type TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 
-def kino_qosh(raqam, nomi, file_id, file_type):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT OR REPLACE INTO kinolar (raqam, nomi, file_id, file_type) VALUES (?,?,?,?)",
-        (raqam, nomi, file_id, file_type)
-    )
-    conn.commit()
-    conn.close()
-
-
-def kino_ol(raqam):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT raqam, nomi, file_id, file_type FROM kinolar WHERE raqam=?", (raqam,))
-    row = c.fetchone()
-    conn.close()
-    return row
-
-
-def jami_kinolar():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM kinolar")
-    jami = c.fetchone()[0]
-    conn.close()
-    return jami
-
-
-def barcha_kinolar():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT raqam, nomi FROM kinolar ORDER BY raqam")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-async def guruh_xabar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg:
-        return
-
-    # Guruh ID tekshirish
-    if msg.chat_id != GURUH_ID:
-        return
-
-    caption = msg.caption or ""
-    parts = caption.strip().split()
-
-    if not parts or not parts[0].isdigit():
-        return
-
-    raqam = int(parts[0])
-    nomi = " ".join(parts[1:]) if len(parts) > 1 else f"Kino {raqam}"
-
-    if msg.video:
-        file_id = msg.video.file_id
-        file_type = "video"
-    elif msg.document:
-        file_id = msg.document.file_id
-        file_type = "document"
-    else:
-        return
-
-    kino_qosh(raqam, nomi, file_id, file_type)
-    logger.info(f"Kino saqlandi: {raqam} - {nomi}")
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"Kino saqlandi! Raqam: {raqam} | Nom: {nomi}"
-        )
-    except Exception as e:
-        logger.error(f"Admin xabar xatosi: {e}")
-
+# ==== HANDLERLAR ====
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    jami = jami_kinolar()
     await update.message.reply_text(
-        f"Kino botga xush kelibsiz!\n\n"
-        f"Bazada: {jami} ta kino\n\n"
-        f"Kino raqamini yozing, yuborib beraman.\n"
-        f"Masalan: 1, 25, 100"
+        "Salom! 🎬\nKino kodini yuboring, masalan: 1"
     )
 
 
-async def kino_yuborish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    matn = update.message.text.strip()
-
-    if not matn.isdigit():
-        await update.message.reply_text("Faqat raqam yozing. Masalan: 1")
+async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/add <kod> — video xabariga reply qilib yuboriladi (faqat admin)"""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("Sizda ruxsat yo'q ❌")
         return
 
-    raqam = int(matn)
-    kino = kino_ol(raqam)
-
-    if not kino:
-        jami = jami_kinolar()
+    if not update.message.reply_to_message:
         await update.message.reply_text(
-            f"{raqam}-raqamda kino yoq.\n"
-            f"Bazada jami {jami} ta kino bor."
+            "Video xabariga reply qilib /add <kod> deb yozing.\nMasalan: /add 1"
         )
         return
 
-    raqam, nomi, file_id, file_type = kino
+    if not context.args:
+        await update.message.reply_text("Kodni kiriting. Masalan: /add 1")
+        return
 
     try:
-        if file_type == "video":
-            await update.message.reply_video(
-                video=file_id,
-                caption=f"{raqam}. {nomi}"
-            )
-        else:
-            await update.message.reply_document(
-                document=file_id,
-                caption=f"{raqam}. {nomi}"
-            )
-    except Exception as e:
-        logger.error(f"Kino yuborishda xato: {e}")
-        await update.message.reply_text("Kino yuborishda xato. Keyinroq urinib koring.")
-
-
-async def royxat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+        code = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Kod raqam bo'lishi kerak!")
         return
-    kinolar = barcha_kinolar()
-    if not kinolar:
-        await update.message.reply_text("Bazada kino yoq.")
-        return
-    matn = f"Jami {len(kinolar)} ta kino:\n\n"
-    for raqam, nomi in kinolar[:50]:
-        matn += f"{raqam}. {nomi}\n"
-    if len(kinolar) > 50:
-        matn += f"\n...va yana {len(kinolar)-50} ta"
-    await update.message.reply_text(matn)
 
+    replied = update.message.reply_to_message
 
-async def kino_ochirish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    try:
-        raqam = int(context.args[0])
-    except (IndexError, ValueError):
-        await update.message.reply_text("Yozing: /ochir 5")
-        return
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM kinolar WHERE raqam=?", (raqam,))
-    ta = c.rowcount
-    conn.commit()
-    conn.close()
-    if ta:
-        await update.message.reply_text(f"{raqam}-kino ochirildi.")
-    else:
-        await update.message.reply_text(f"{raqam}-raqamda kino yoq.")
-
-
-async def statistika(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    jami = jami_kinolar()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT MAX(raqam) FROM kinolar")
-    max_raqam = c.fetchone()[0] or 0
-    conn.close()
-    await update.message.reply_text(
-        f"Statistika:\nJami: {jami} ta\nEng yuqori raqam: {max_raqam}"
+    # Videoni yopiq kanalga nusxalab joylaymiz
+    forwarded = await context.bot.copy_message(
+        chat_id=CHANNEL_ID,
+        from_chat_id=update.effective_chat.id,
+        message_id=replied.message_id,
     )
+
+    cur.execute(
+        "INSERT OR REPLACE INTO movies (code, message_id) VALUES (?, ?)",
+        (code, forwarded.message_id),
+    )
+    conn.commit()
+
+    await update.message.reply_text(f"✅ Kino {code}-kod bilan saqlandi!")
+
+
+async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/delete <kod> — faqat admin"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Sizda ruxsat yo'q ❌")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Kodni kiriting. Masalan: /delete 1")
+        return
+
+    try:
+        code = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Kod raqam bo'lishi kerak!")
+        return
+
+    cur.execute("DELETE FROM movies WHERE code=?", (code,))
+    conn.commit()
+    await update.message.reply_text(f"🗑 {code}-kod o'chirildi.")
+
+
+async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi raqam yozganda kino yuboriladi"""
+    text = update.message.text.strip()
+
+    if not text.isdigit():
+        await update.message.reply_text(
+            "Iltimos, faqat kino kodini (raqam) yuboring."
+        )
+        return
+
+    code = int(text)
+    cur.execute("SELECT message_id FROM movies WHERE code=?", (code,))
+    row = cur.fetchone()
+
+    if row is None:
+        await update.message.reply_text("❌ Bunday kodli kino topilmadi.")
+        return
+
+    message_id = row[0]
+    try:
+        await context.bot.copy_message(
+            chat_id=update.effective_chat.id,
+            from_chat_id=CHANNEL_ID,
+            message_id=message_id,
+        )
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text("Xatolik yuz berdi, keyinroq urinib ko'ring.")
 
 
 def main():
-    init_db()
-    application = Application.builder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("royxat", royxat))
-    application.add_handler(CommandHandler("ochir", kino_ochirish))
-    application.add_handler(CommandHandler("stat", statistika))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add_movie))
+    app.add_handler(CommandHandler("delete", delete_movie))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
 
-    # Guruhdan video/hujjat qabul qilish
-    application.add_handler(MessageHandler(
-        filters.VIDEO | filters.Document.ALL,
-        guruh_xabar
-    ))
-
-    # Foydalanuvchidan raqam qabul qilish
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        kino_yuborish
-    ))
-
-    logger.info("Kino bot ishga tushdi!")
-    application.run_polling(drop_pending_updates=True)
+    print("Bot ishga tushdi...")
+    app.run_polling()
 
 
 if __name__ == "__main__":
