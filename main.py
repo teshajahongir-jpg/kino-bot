@@ -1,5 +1,8 @@
 import logging
+import os
 import sqlite3
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -10,7 +13,7 @@ from telegram.ext import (
 )
 
 # ==== SOZLAMALAR (shu 3 ta qatorni o'zgartiring) ====
-BOT_TOKEN = "8811167886:AAHAwge8-d5IKWEi_yvXI2-_DRlYUV-afZY"        # @BotFather bergan token
+BOT_TOKEN = "8790540529:AAHMnT8hvu6DvZ7TyzxxwQALjc9MkX6X8ZA"        # @BotFather bergan token
 ADMIN_IDS = [8252424738]                     # sizning Telegram ID (@userinfobot dan)
 CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan)
 
@@ -132,7 +135,29 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Xatolik yuz berdi, keyinroq urinib ko'ring.")
 
 
+class PingHandler(BaseHTTPRequestHandler):
+    """Render'ga 'tirikman' deb javob beruvchi kichik HTTP server"""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot ishlab turibdi")
+
+    def log_message(self, format, *args):
+        pass  # konsolni keraksiz loglar bilan to'ldirmaslik uchun
+
+
+def run_ping_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), PingHandler)
+    server.serve_forever()
+
+
 def main():
+    # Render "Web Service" port kutgani uchun fon jarayonida kichik server ishga tushiramiz
+    threading.Thread(target=run_ping_server, daemon=True).start()
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
