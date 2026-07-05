@@ -19,7 +19,7 @@ ADMIN_IDS = [8252424738]                    # sizning Telegram ID (@userinfobot 
 CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
 # Majburiy obuna uchun ochiq (public) kanal username'i (bot shu kanalda ADMIN bo'lishi shart!)
-FORCE_SUB_CHANNEL = "https://t.me/kadamkh"       # masalan: "@kino_yangiliklari"
+FORCE_SUB_CHANNEL = "@kadamkh"       # masalan: "@kino_yangiliklari"
 
 logging.basicConfig(level=logging.INFO)
 
