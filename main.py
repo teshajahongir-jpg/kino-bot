@@ -13,10 +13,13 @@ from telegram.ext import (
     filters,
 )
 
-# ==== SOZLAMALAR (shu 3 ta qatorni o'zgartiring) ====
-BOT_TOKEN = "8790540529:AAHMnT8hvu6DvZ7TyzxxwQALjc9MkX6X8ZA"        # @BotFather bergan token
+# ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
+BOT_TOKEN = "8811167886:AAHAwge8-d5IKWEi_yvXI2-_DRlYUV-afZY"        # @BotFather bergan token
 ADMIN_IDS = [8252424738]                    # sizning Telegram ID (@userinfobot dan)
-CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan)
+CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
+
+# Majburiy obuna uchun ochiq (public) kanal username'i (bot shu kanalda ADMIN bo'lishi shart!)
+FORCE_SUB_CHANNEL = "https://t.me/kadamkh"       # masalan: "@kino_yangiliklari"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,6 +65,26 @@ def get_users_count() -> int:
 def get_movies_count() -> int:
     cur.execute("SELECT COUNT(*) FROM movies")
     return cur.fetchone()[0]
+
+
+async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Foydalanuvchi FORCE_SUB_CHANNEL kanaliga a'zo yoki yo'qligini tekshiradi"""
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        logging.error(f"Obunani tekshirishda xato: {e}")
+        # Agar tekshirib bo'lmasa (masalan bot admin emas), xatoni bloklamaslik uchun True qaytaramiz
+        return True
+
+
+def subscribe_keyboard():
+    channel_username = FORCE_SUB_CHANNEL.lstrip("@")
+    keyboard = [
+        [InlineKeyboardButton("📢 Kanalga qo'shilish", url=f"https://t.me/{channel_username}")],
+        [InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 
 # ==== ADMIN PANEL ====
@@ -133,6 +156,18 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🛠 Admin panel", reply_markup=admin_menu_keyboard())
 
 
+async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'✅ Tekshirish' tugmasi bosilganda ishlaydi"""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if await is_subscribed(context, user_id):
+        await query.answer("✅ Rahmat, obuna tasdiqlandi!")
+        await query.edit_message_text("Salom! 🎬\nKino kodini yuboring, masalan: 1")
+    else:
+        await query.answer("❌ Siz hali kanalga qo'shilmagansiz!", show_alert=True)
+
+
 async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin broadcast rejimida bo'lsa, keyingi xabarini hammaga yuboradi"""
     user_id = update.effective_user.id
@@ -164,6 +199,15 @@ async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(update.effective_user)
+
+    if not await is_subscribed(context, update.effective_user.id):
+        await update.message.reply_text(
+            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
+            "so'ng '✅ Tekshirish' tugmasini bosing.",
+            reply_markup=subscribe_keyboard(),
+        )
+        return
+
     await update.message.reply_text(
         "Salom! 🎬\nKino kodini yuboring, masalan: 1"
     )
@@ -242,6 +286,15 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await do_broadcast(update, context)
         return
 
+    # Majburiy obuna tekshiruvi (adminlar uchun shart emas)
+    if not is_admin(user_id) and not await is_subscribed(context, user_id):
+        await update.message.reply_text(
+            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
+            "so'ng '✅ Tekshirish' tugmasini bosing.",
+            reply_markup=subscribe_keyboard(),
+        )
+        return
+
     text = (update.message.text or "").strip()
 
     if not text.isdigit():
@@ -307,6 +360,7 @@ def main():
     app.add_handler(CommandHandler("add", add_movie))
     app.add_handler(CommandHandler("delete", delete_movie))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
     app.add_handler(
         MessageHandler(
