@@ -3,7 +3,12 @@ import os
 import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -15,11 +20,16 @@ from telegram.ext import (
 
 # ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
 BOT_TOKEN = "8790540529:AAHMnT8hvu6DvZ7TyzxxwQALjc9MkX6X8ZA"        # @BotFather bergan token
-ADMIN_IDS = [8252424738]                    # sizning Telegram ID (@userinfobot dan)
-CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
+ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yerga yozing
+CHANNEL_ID = -1001234567890                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
-# Majburiy obuna uchun ochiq (public) kanal username'i (bot shu kanalda ADMIN bo'lishi shart!)
-FORCE_SUB_CHANNEL = "@kadamkh"              # majburiy obuna kanali
+# Majburiy obuna kanallari — istagancha qo'shishingiz mumkin
+# har biri: ("Ko'rsatiladigan nom", "@kanal_username")
+FORCE_SUB_CHANNELS = [
+    ("Kanal 1", "@kadamkh"),
+    # ("Kanal 2", "@ikkinchi_kanal"),
+    # ("Kanal 3", "@uchinchi_kanal"),
+]
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,8 +51,11 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# Broadcast holatini vaqtincha eslab turish uchun (kim /broadcast bosgan)
+# Broadcast holatini vaqtincha eslab turish uchun (kim "Xabar yuborish" bosgan)
 awaiting_broadcast = set()
+
+MAIN_MENU_SEARCH = "🔍 Kino qidirish"
+MAIN_MENU_LIST = "📚 Kinolar ro'yxati"
 
 
 def is_admin(user_id: int) -> bool:
@@ -67,23 +80,41 @@ def get_movies_count() -> int:
     return cur.fetchone()[0]
 
 
+def main_menu_keyboard():
+    keyboard = [
+        [MAIN_MENU_SEARCH, MAIN_MENU_LIST],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+
 async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """Foydalanuvchi FORCE_SUB_CHANNEL kanaliga a'zo yoki yo'qligini tekshiradi"""
-    try:
-        member = await context.bot.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=user_id)
-        return member.status in ("member", "administrator", "creator")
-    except Exception as e:
-        logging.error(f"Obunani tekshirishda xato: {e}")
-        # Agar tekshirib bo'lmasa (masalan bot admin emas), xatoni bloklamaslik uchun True qaytaramiz
+    """Foydalanuvchi FORCE_SUB_CHANNELS dagi BARCHA kanallarga a'zo yoki yo'qligini tekshiradi"""
+    if not FORCE_SUB_CHANNELS:
         return True
+
+    for _, channel_username in FORCE_SUB_CHANNELS:
+        try:
+            member = await context.bot.get_chat_member(
+                chat_id=channel_username, user_id=user_id
+            )
+            if member.status not in ("member", "administrator", "creator"):
+                return False
+        except Exception as e:
+            logging.error(f"Obunani tekshirishda xato ({channel_username}): {e}")
+            # Tekshirib bo'lmasa (masalan bot admin emas), botni butunlay to'xtatmaslik uchun o'tkazib yuboramiz
+            continue
+
+    return True
 
 
 def subscribe_keyboard():
-    channel_username = FORCE_SUB_CHANNEL.lstrip("@")
-    keyboard = [
-        [InlineKeyboardButton("📢 Kanalga qo'shilish", url=f"https://t.me/{channel_username}")],
-        [InlineKeyboardButton("✅ Tekshirish", callback_data="check_sub")],
-    ]
+    keyboard = []
+    for name, username in FORCE_SUB_CHANNELS:
+        channel_username = username.lstrip("@")
+        keyboard.append(
+            [InlineKeyboardButton(f"📢 {name}", url=f"https://t.me/{channel_username}")]
+        )
+    keyboard.append([InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_sub")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -120,13 +151,33 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "admin_stats":
         users_count = get_users_count()
         movies_count = get_movies_count()
+
+        cur.execute("SELECT user_id, username FROM users ORDER BY joined_at DESC")
+        rows = cur.fetchall()
+
+        lines = []
+        for uid, username in rows:
+            if username:
+                lines.append(f"• @{username} — <code>{uid}</code>")
+            else:
+                lines.append(f"• (username yo'q) — <code>{uid}</code>")
+
+        users_list_text = "\n".join(lines) if lines else "Hozircha foydalanuvchi yo'q."
+
+        # Telegram bitta xabarga ~4000 belgi sig'diradi, shuning uchun uzun bo'lsa qisqartiramiz
+        if len(users_list_text) > 3500:
+            users_list_text = users_list_text[:3500] + "\n\n... (ro'yxat uzun, qisqartirildi)"
+
         text = (
             f"📊 Statistika\n\n"
             f"👥 Foydalanuvchilar soni: {users_count}\n"
-            f"🎬 Kinolar soni: {movies_count}"
+            f"🎬 Kinolar soni: {movies_count}\n\n"
+            f"👤 Foydalanuvchilar ro'yxati:\n{users_list_text}"
         )
         keyboard = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="admin_back")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        )
 
     elif query.data == "admin_movies":
         cur.execute("SELECT code FROM movies ORDER BY code")
@@ -144,7 +195,8 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="admin_cancel_broadcast")]]
         await query.edit_message_text(
             "📢 Endi barcha foydalanuvchilarga yubormoqchi bo'lgan xabaringizni yozing.\n"
-            "(Matn, rasm, video — istalgani bo'lishi mumkin)",
+            "(Matn, rasm, video — istalgani bo'lishi mumkin)\n\n"
+            "Xabar bot nomidan boradi, kim yuborgani ko'rinmaydi.",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
@@ -157,15 +209,20 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def check_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """'✅ Tekshirish' tugmasi bosilganda ishlaydi"""
+    """'✅ Obuna bo'ldim' tugmasi bosilganda ishlaydi"""
     query = update.callback_query
     user_id = query.from_user.id
 
     if await is_subscribed(context, user_id):
         await query.answer("✅ Rahmat, obuna tasdiqlandi!")
-        await query.edit_message_text("Salom! 🎬\nKino kodini yuboring, masalan: 1")
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="Salom! 🎬\nKino kodini yuboring yoki pastdagi tugmalardan foydalaning.",
+            reply_markup=main_menu_keyboard(),
+        )
     else:
-        await query.answer("❌ Siz hali kanalga qo'shilmagansiz!", show_alert=True)
+        await query.answer("❌ Siz hali barcha kanallarga qo'shilmagansiz!", show_alert=True)
 
 
 async def do_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,14 +259,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not await is_subscribed(context, update.effective_user.id):
         await update.message.reply_text(
-            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
-            "so'ng '✅ Tekshirish' tugmasini bosing.",
+            "Botdan foydalanish uchun avval quyidagi kanal(lar)ga qo'shiling, "
+            "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
             reply_markup=subscribe_keyboard(),
         )
         return
 
     await update.message.reply_text(
-        "Salom! 🎬\nKino kodini yuboring, masalan: 1"
+        "Salom! 🎬\nKino kodini yuboring yoki pastdagi tugmalardan foydalaning.",
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -275,6 +333,18 @@ async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🗑 {code}-kod o'chirildi.")
 
 
+async def show_movies_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📚 Kinolar ro'yxati tugmasi — barcha foydalanuvchilarga mavjud kodlarni ko'rsatadi"""
+    cur.execute("SELECT code FROM movies ORDER BY code")
+    rows = cur.fetchall()
+    if rows:
+        codes = ", ".join(str(r[0]) for r in rows)
+        text = f"🎬 Mavjud kino kodlari:\n\n{codes}\n\nKodni yuboring, kino keladi."
+    else:
+        text = "Hozircha hech qanday kino qo'shilmagan."
+    await update.message.reply_text(text)
+
+
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Foydalanuvchi raqam yozganda kino yuboriladi (yoki admin broadcast yozayotgan bo'lsa, shu qabul qilinadi)"""
     save_user(update.effective_user)
@@ -286,16 +356,25 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await do_broadcast(update, context)
         return
 
+    text = (update.message.text or "").strip()
+
+    # Pastki menyu tugmalari
+    if text == MAIN_MENU_LIST:
+        await show_movies_list(update, context)
+        return
+
+    if text == MAIN_MENU_SEARCH:
+        await update.message.reply_text("Kino kodini yuboring, masalan: 1")
+        return
+
     # Majburiy obuna tekshiruvi (adminlar uchun shart emas)
     if not is_admin(user_id) and not await is_subscribed(context, user_id):
         await update.message.reply_text(
-            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
-            "so'ng '✅ Tekshirish' tugmasini bosing.",
+            "Botdan foydalanish uchun avval quyidagi kanal(lar)ga qo'shiling, "
+            "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
             reply_markup=subscribe_keyboard(),
         )
         return
-
-    text = (update.message.text or "").strip()
 
     if not text.isdigit():
         await update.message.reply_text(
