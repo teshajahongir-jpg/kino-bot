@@ -19,7 +19,7 @@ from telegram.ext import (
 )
 
 # ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
-BOT_TOKEN = "SIZNING_BOT_TOKENINGIZ"        # @BotFather bergan token
+BOT_TOKEN = "8790540529:AAHMnT8hvu6DvZ7TyzxxwQALjc9MkX6X8ZA"        # @BotFather bergan token
 ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yerga yozing
 CHANNEL_ID = -1001234567890                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
