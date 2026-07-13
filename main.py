@@ -296,12 +296,52 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     replied = update.message.reply_to_message
 
-    # Videoni yopiq kanalga nusxalab joylaymiz
-    forwarded = await context.bot.copy_message(
-        chat_id=CHANNEL_ID,
-        from_chat_id=update.effective_chat.id,
-        message_id=replied.message_id,
-    )
+    forwarded = None
+
+    # 1-urinish: copy_message (eng tez, aksariyat holatda ishlaydi)
+    try:
+        forwarded = await context.bot.copy_message(
+            chat_id=CHANNEL_ID,
+            from_chat_id=update.effective_chat.id,
+            message_id=replied.message_id,
+        )
+    except Exception as e:
+        logging.warning(f"copy_message ishlamadi, file_id orqali sinaymiz: {e}")
+
+    # 2-urinish: agar copy_message ishlamasa (masalan himoyalangan kontent),
+    # video/fayl file_id'sini olib qayta yuboramiz
+    if forwarded is None:
+        try:
+            caption = replied.caption or None
+            if replied.video:
+                forwarded = await context.bot.send_video(
+                    chat_id=CHANNEL_ID, video=replied.video.file_id, caption=caption
+                )
+            elif replied.document:
+                forwarded = await context.bot.send_document(
+                    chat_id=CHANNEL_ID, document=replied.document.file_id, caption=caption
+                )
+            elif replied.animation:
+                forwarded = await context.bot.send_animation(
+                    chat_id=CHANNEL_ID, animation=replied.animation.file_id, caption=caption
+                )
+            elif replied.photo:
+                forwarded = await context.bot.send_photo(
+                    chat_id=CHANNEL_ID, photo=replied.photo[-1].file_id, caption=caption
+                )
+        except Exception as e:
+            logging.error(f"/add xatosi (file_id usuli ham ishlamadi): {e}")
+            await update.message.reply_text(
+                "❌ Kinoni saqlab bo'lmadi. Iltimos, videoni forward qilmasdan, "
+                "to'g'ridan-to'g'ri fayl sifatida qayta yuborib ko'ring."
+            )
+            return
+
+    if forwarded is None:
+        await update.message.reply_text(
+            "❌ Bu xabar turi qo'llab-quvvatlanmaydi. Video, fayl yoki rasm yuboring."
+        )
+        return
 
     cur.execute(
         "INSERT OR REPLACE INTO movies (code, message_id) VALUES (?, ?)",
