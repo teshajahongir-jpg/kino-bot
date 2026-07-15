@@ -24,7 +24,7 @@ ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yer
 CHANNEL_ID = -1002727313975                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
 # Majburiy obuna kanali — yopiq kanal bo'lgani uchun raqamli ID ishlatiladi
-FORCE_SUB_CHANNEL_ID = -1004378756719       # majburiy obuna kanali (yopiq)
+FORCE_SUB_CHANNEL_ID = -1002727313975       # majburiy obuna kanali (yopiq)
 
 # Premium uchun to'lov kartasi
 PREMIUM_CARD_NUMBER = "5614 6821 1353 0267"
