@@ -19,17 +19,16 @@ from telegram.ext import (
 )
 
 # ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
-BOT_TOKEN = "8790540529:AAHMnT8hvu6DvZ7TyzxxwQALjc9MkX6X8ZA"        # @BotFather bergan token
+BOT_TOKEN = "8790540529:AAGEs-tjB3zdhnS6q491W5vhh6VqCLwM4iU"        # @BotFather bergan token
 ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yerga yozing
-CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
+CHANNEL_ID = -1001234567890                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
-# Majburiy obuna kanallari — istagancha qo'shishingiz mumkin
-# har biri: ("Ko'rsatiladigan nom", "@kanal_username")
-FORCE_SUB_CHANNELS = [
-    ("Kanal 1", "@kadamkh"),
-    # ("Kanal 2", "@ikkinchi_kanal"),
-    # ("Kanal 3", "@uchinchi_kanal"),
-]
+# Majburiy obuna kanali — yopiq kanal bo'lgani uchun raqamli ID ishlatiladi
+FORCE_SUB_CHANNEL_ID = -1004378756719       # majburiy obuna kanali (yopiq)
+
+# Premium uchun to'lov kartasi
+PREMIUM_CARD_NUMBER = "5614 6821 1353 0267"
+PREMIUM_PRICE_TEXT = "15 000 so'm / oy"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,27 +38,55 @@ cur = conn.cursor()
 cur.execute("""
 CREATE TABLE IF NOT EXISTS movies (
     code INTEGER PRIMARY KEY,
-    message_id INTEGER NOT NULL
+    message_id INTEGER NOT NULL,
+    views INTEGER DEFAULT 0
 )
 """)
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
+    premium INTEGER DEFAULT 0,
     joined_at TEXT DEFAULT (datetime('now'))
 )
 """)
 conn.commit()
 
+# Eski bazalarda ustun bo'lmasligi mumkin — xavfsiz qo'shamiz
+for stmt in [
+    "ALTER TABLE movies ADD COLUMN views INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN premium INTEGER DEFAULT 0",
+]:
+    try:
+        cur.execute(stmt)
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # ustun allaqachon mavjud
+
 # Broadcast holatini vaqtincha eslab turish uchun (kim "Xabar yuborish" bosgan)
 awaiting_broadcast = set()
+# Premium chek kutilayotgan foydalanuvchilar
+awaiting_receipt = set()
 
 MAIN_MENU_SEARCH = "🔍 Kino qidirish"
 MAIN_MENU_LIST = "📚 Kinolar ro'yxati"
+MAIN_MENU_TOP = "🔥 Eng ko'p ko'rilgan"
+MAIN_MENU_PREMIUM = "⭐ Premium tarif"
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
+
+def is_premium(user_id: int) -> bool:
+    cur.execute("SELECT premium FROM users WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def set_premium(user_id: int, value: int = 1):
+    cur.execute("UPDATE users SET premium=? WHERE user_id=?", (value, user_id))
+    conn.commit()
 
 
 def save_user(user):
@@ -83,38 +110,51 @@ def get_movies_count() -> int:
 def main_menu_keyboard():
     keyboard = [
         [MAIN_MENU_SEARCH, MAIN_MENU_LIST],
+        [MAIN_MENU_TOP, MAIN_MENU_PREMIUM],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
 async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """Foydalanuvchi FORCE_SUB_CHANNELS dagi BARCHA kanallarga a'zo yoki yo'qligini tekshiradi"""
-    if not FORCE_SUB_CHANNELS:
+    """Foydalanuvchi majburiy obuna kanaliga a'zo yoki yo'qligini tekshiradi"""
+    if not FORCE_SUB_CHANNEL_ID:
         return True
 
-    for _, channel_username in FORCE_SUB_CHANNELS:
-        try:
-            member = await context.bot.get_chat_member(
-                chat_id=channel_username, user_id=user_id
-            )
-            if member.status not in ("member", "administrator", "creator"):
-                return False
-        except Exception as e:
-            logging.error(f"Obunani tekshirishda xato ({channel_username}): {e}")
-            # Tekshirib bo'lmasa (masalan bot admin emas), botni butunlay to'xtatmaslik uchun o'tkazib yuboramiz
-            continue
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id=FORCE_SUB_CHANNEL_ID, user_id=user_id
+        )
+        if member.status not in ("member", "administrator", "creator"):
+            return False
+    except Exception as e:
+        logging.error(f"Obunani tekshirishda xato: {e}")
+        # Tekshirib bo'lmasa (masalan bot admin emas), botni butunlay to'xtatmaslik uchun ruxsat beramiz
+        return True
 
     return True
 
 
-def subscribe_keyboard():
-    keyboard = []
-    for name, username in FORCE_SUB_CHANNELS:
-        channel_username = username.lstrip("@")
-        keyboard.append(
-            [InlineKeyboardButton(f"📢 {name}", url=f"https://t.me/{channel_username}")]
-        )
-    keyboard.append([InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_sub")])
+# Invite link'ni har safar qayta yaratmaslik uchun keshda saqlaymiz
+_invite_link_cache = {"link": None}
+
+
+async def get_channel_invite_link(context: ContextTypes.DEFAULT_TYPE) -> str:
+    if _invite_link_cache["link"] is None:
+        try:
+            link = await context.bot.export_chat_invite_link(chat_id=FORCE_SUB_CHANNEL_ID)
+            _invite_link_cache["link"] = link
+        except Exception as e:
+            logging.error(f"Invite link yaratib bo'lmadi: {e}")
+            _invite_link_cache["link"] = "https://t.me/"
+    return _invite_link_cache["link"]
+
+
+async def subscribe_keyboard(context: ContextTypes.DEFAULT_TYPE):
+    link = await get_channel_invite_link(context)
+    keyboard = [
+        [InlineKeyboardButton("📢 Kanalga qo'shilish", url=link)],
+        [InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_sub")],
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -261,7 +301,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Botdan foydalanish uchun avval quyidagi kanal(lar)ga qo'shiling, "
             "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
-            reply_markup=subscribe_keyboard(),
+            reply_markup=await subscribe_keyboard(context),
         )
         return
 
@@ -298,7 +338,29 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     forwarded = None
 
-    # 1-urinish: copy_message (eng tez, aksariyat holatda ishlaydi)
+    # 0-urinish: agar bu xabar kanaldan FORWARD qilingan bo'lsa, faylni umuman
+    # qayta yuklamaymiz — kanaldagi asl joyini eslab qolamiz. Bu katta (50MB+) fayllar
+    # uchun yagona ishlaydigan usul, chunki bot API orqali qayta yuklashda 50MB chegara bor.
+    origin_chat = getattr(replied, "forward_from_chat", None)
+    origin_message_id = getattr(replied, "forward_from_message_id", None)
+
+    # Yangiroq kutubxona versiyalarida forward_origin ishlatiladi, shuni ham tekshiramiz
+    if origin_chat is None:
+        forward_origin = getattr(replied, "forward_origin", None)
+        if forward_origin is not None:
+            origin_chat = getattr(forward_origin, "chat", None)
+            origin_message_id = getattr(forward_origin, "message_id", None)
+
+    if origin_chat is not None and origin_chat.id == CHANNEL_ID and origin_message_id:
+        cur.execute(
+            "INSERT OR REPLACE INTO movies (code, message_id) VALUES (?, ?)",
+            (code, origin_message_id),
+        )
+        conn.commit()
+        await update.message.reply_text(f"✅ Kino {code}-kod bilan saqlandi! (katta fayl usuli)")
+        return
+
+    # 1-urinish: copy_message (eng tez, aksariyat holatda ishlaydi, lekin 50MB dan katta bo'lsa ishlamaydi)
     try:
         forwarded = await context.bot.copy_message(
             chat_id=CHANNEL_ID,
@@ -332,8 +394,9 @@ async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"/add xatosi (file_id usuli ham ishlamadi): {e}")
             await update.message.reply_text(
-                "❌ Kinoni saqlab bo'lmadi. Iltimos, videoni forward qilmasdan, "
-                "to'g'ridan-to'g'ri fayl sifatida qayta yuborib ko'ring."
+                "❌ Kinoni saqlab bo'lmadi. Agar fayl 50MB dan katta bo'lsa: "
+                "videoni to'g'ridan-to'g'ri kanalga qo'lda yuklang, so'ng o'sha "
+                "kanal xabarini botga forward qilib, shungaReply qilib /add yozing."
             )
             return
 
@@ -385,6 +448,108 @@ async def show_movies_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+def premium_text() -> str:
+    return (
+        "⭐ <b>Premium tarif</b>\n\n"
+        "Premium tarifga o'tib, quyidagi imkoniyatlarga ega bo'ling:\n"
+        "🚫 Reklamalarsiz foydalanish\n"
+        "🚫 Majburiy obunasiz kirish\n"
+        "🔥 \"Eng ko'p ko'rilgan kinolar\" bo'limiga kirish\n"
+        "⚡ Tezkor va qulay xizmat\n\n"
+        f"💳 Narxi: <b>{PREMIUM_PRICE_TEXT}</b>\n\n"
+        f"To'lovni quyidagi karta raqamiga o'tkazing:\n"
+        f"<code>{PREMIUM_CARD_NUMBER}</code>\n\n"
+        "✅ To'lovni amalga oshirgach, chek (skrinshot) rasmini shu yerga yuboring.\n"
+        "Admin tasdiqlagach, Premium tarif faollashadi."
+    )
+
+
+async def send_premium_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    awaiting_receipt.add(user_id)
+    await update.message.reply_text(premium_text(), parse_mode="HTML")
+
+
+async def show_top_movies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🔥 Eng ko'p ko'rilgan tugmasi — faqat Premium foydalanuvchilar uchun"""
+    user_id = update.effective_user.id
+
+    if not is_admin(user_id) and not is_premium(user_id):
+        awaiting_receipt.add(user_id)
+        await update.message.reply_text(
+            "🔒 Bu bo'lim faqat <b>Premium</b> foydalanuvchilar uchun.\n\n" + premium_text(),
+            parse_mode="HTML",
+        )
+        return
+
+    cur.execute("SELECT code, views FROM movies ORDER BY views DESC LIMIT 5")
+    rows = cur.fetchall()
+    if not rows:
+        await update.message.reply_text("Hozircha statistika yo'q.")
+        return
+
+    lines = [f"{i+1}. Kod {code} — {views} marta ko'rilgan" for i, (code, views) in enumerate(rows)]
+    text = "🔥 Eng ko'p ko'rilgan kinolar:\n\n" + "\n".join(lines)
+    await update.message.reply_text(text)
+
+
+async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchi Premium uchun chek (rasm) yuborsa, adminlarga forward qilinadi"""
+    user = update.effective_user
+    awaiting_receipt.discard(user.id)
+
+    caption = (
+        f"💳 Yangi Premium to'lov cheki!\n\n"
+        f"👤 Foydalanuvchi: @{user.username or 'username yo\u2018q'}\n"
+        f"🆔 ID: <code>{user.id}</code>\n\n"
+        f"Tasdiqlash uchun: /premium {user.id}"
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.bot.copy_message(
+                chat_id=admin_id,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.message.message_id,
+            )
+            await context.bot.send_message(chat_id=admin_id, text=caption, parse_mode="HTML")
+        except Exception as e:
+            logging.error(f"Adminga chek yuborishda xato ({admin_id}): {e}")
+
+    await update.message.reply_text(
+        "✅ Chekingiz qabul qilindi! Admin tasdiqlashi bilan Premium tarif faollashadi."
+    )
+
+
+async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/premium <user_id> — faqat admin, foydalanuvchiga Premium beradi"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("Sizda ruxsat yo'q ❌")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Foydalanuvchi ID sini kiriting. Masalan: /premium 123456789")
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("ID raqam bo'lishi kerak!")
+        return
+
+    set_premium(target_id, 1)
+    await update.message.reply_text(f"✅ {target_id} endi Premium foydalanuvchi!")
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text="🎉 Tabriklaymiz! Sizga Premium tarif faollashtirildi.\n"
+                 "Endi reklamalarsiz, majburiy obunasiz foydalanishingiz mumkin.",
+        )
+    except Exception as e:
+        logging.error(f"Foydalanuvchiga xabar berishda xato: {e}")
+
+
 async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Foydalanuvchi raqam yozganda kino yuboriladi (yoki admin broadcast yozayotgan bo'lsa, shu qabul qilinadi)"""
     save_user(update.effective_user)
@@ -407,12 +572,20 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kino kodini yuboring, masalan: 1")
         return
 
-    # Majburiy obuna tekshiruvi (adminlar uchun shart emas)
-    if not is_admin(user_id) and not await is_subscribed(context, user_id):
+    if text == MAIN_MENU_TOP:
+        await show_top_movies(update, context)
+        return
+
+    if text == MAIN_MENU_PREMIUM:
+        await send_premium_info(update, context)
+        return
+
+    # Majburiy obuna tekshiruvi (adminlar va Premium foydalanuvchilar uchun shart emas)
+    if not is_admin(user_id) and not is_premium(user_id) and not await is_subscribed(context, user_id):
         await update.message.reply_text(
             "Botdan foydalanish uchun avval quyidagi kanal(lar)ga qo'shiling, "
             "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
-            reply_markup=subscribe_keyboard(),
+            reply_markup=await subscribe_keyboard(context),
         )
         return
 
@@ -437,16 +610,24 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from_chat_id=CHANNEL_ID,
             message_id=message_id,
         )
+        cur.execute("UPDATE movies SET views = views + 1 WHERE code=?", (code,))
+        conn.commit()
     except Exception as e:
         logging.error(e)
         await update.message.reply_text("Xatolik yuz berdi, keyinroq urinib ko'ring.")
 
 
 async def broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Agar admin broadcast rejimida rasm/video/fayl yuborsa"""
+    """Admin broadcast rejimida rasm/video/fayl yuborsa, yoki foydalanuvchi Premium chek yuborsa"""
     user_id = update.effective_user.id
+
     if user_id in awaiting_broadcast and is_admin(user_id):
         await do_broadcast(update, context)
+        return
+
+    if user_id in awaiting_receipt and update.message.photo:
+        await handle_receipt_photo(update, context)
+        return
 
 
 class PingHandler(BaseHTTPRequestHandler):
@@ -478,6 +659,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("add", add_movie))
     app.add_handler(CommandHandler("delete", delete_movie))
+    app.add_handler(CommandHandler("premium", grant_premium))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
