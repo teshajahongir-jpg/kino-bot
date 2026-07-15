@@ -19,9 +19,9 @@ from telegram.ext import (
 )
 
 # ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
-BOT_TOKEN = "8790540529:AAGEs-tjB3zdhnS6q491W5vhh6VqCLwM4iU"        # @BotFather bergan token
+BOT_TOKEN = "8790540529:AAE6PFQXK7Xns0dGzxqXlZXaiFf0J0s2dbA"        # @BotFather bergan token
 ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yerga yozing
-CHANNEL_ID = -1001234567890                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
+CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
 # Majburiy obuna kanali — yopiq kanal bo'lgani uchun raqamli ID ishlatiladi
 FORCE_SUB_CHANNEL_ID = -1004378756719       # majburiy obuna kanali (yopiq)
@@ -498,9 +498,10 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     awaiting_receipt.discard(user.id)
 
+    username_display = user.username or "username yo'q"
     caption = (
         f"💳 Yangi Premium to'lov cheki!\n\n"
-        f"👤 Foydalanuvchi: @{user.username or 'username yo\u2018q'}\n"
+        f"👤 Foydalanuvchi: @{username_display}\n"
         f"🆔 ID: <code>{user.id}</code>\n\n"
         f"Tasdiqlash uchun: /premium {user.id}"
     )
