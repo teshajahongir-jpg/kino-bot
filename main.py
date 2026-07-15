@@ -21,7 +21,7 @@ from telegram.ext import (
 # ==== SOZLAMALAR (shu qatorlarni o'zgartiring) ====
 BOT_TOKEN = "8790540529:AAE6PFQXK7Xns0dGzxqXlZXaiFf0J0s2dbA"        # @BotFather bergan token
 ADMIN_IDS = [8252424738, 2049500709]        # ikkinchi adminning ID'sini shu yerga yozing
-CHANNEL_ID = -1004378756719                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
+CHANNEL_ID = -1002727313975                 # yopiq kanal ID (@getidsbot dan) — kinolar shu yerda saqlanadi
 
 # Majburiy obuna kanali — yopiq kanal bo'lgani uchun raqamli ID ishlatiladi
 FORCE_SUB_CHANNEL_ID = -1004378756719       # majburiy obuna kanali (yopiq)
