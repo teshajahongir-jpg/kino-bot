@@ -82,6 +82,8 @@ MAIN_MENU_LIST = "📚 Kinolar ro'yxati"
 MAIN_MENU_TOP = "🔥 Eng ko'p ko'rilgan"
 MAIN_MENU_PREMIUM = "⭐ Premium tarif"
 MAIN_MENU_ADMIN = "🛠 Admin panel"
+MAIN_MENU_ADD_FREE = "🎬 Bepul kino joylash"
+MAIN_MENU_ADD_PREMIUM = "⭐ Premium kino joylash"
 
 
 # ==== YORDAMCHI FUNKSIYALAR ====
@@ -124,8 +126,9 @@ def main_menu_keyboard(user_id: int = None):
         [MAIN_MENU_SEARCH, MAIN_MENU_LIST],
         [MAIN_MENU_TOP, MAIN_MENU_PREMIUM],
     ]
-    # Admin uchun /admin yozishga hojat qolmasin — tugma o'zi chiqadi
+    # Admin uchun /admin yozishga hojat qolmasin — tugmalar o'zi chiqadi
     if user_id is not None and is_admin(user_id):
+        keyboard.append([MAIN_MENU_ADD_FREE, MAIN_MENU_ADD_PREMIUM])
         keyboard.append([MAIN_MENU_ADMIN])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -644,6 +647,16 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == MAIN_MENU_ADMIN and is_admin(user_id):
         await admin_panel(update, context)
+        return
+
+    if text == MAIN_MENU_ADD_FREE and is_admin(user_id):
+        awaiting_movie_code[user_id] = 0
+        await update.message.reply_text("🎬 Bepul kino qo'shish.\n\nKino kodini yuboring (masalan: 1):")
+        return
+
+    if text == MAIN_MENU_ADD_PREMIUM and is_admin(user_id):
+        awaiting_movie_code[user_id] = 1
+        await update.message.reply_text("⭐ Premium kino qo'shish.\n\nKino kodini yuboring (masalan: 1):")
         return
 
     if text == MAIN_MENU_LIST:
