@@ -178,8 +178,10 @@ def premium_text() -> str:
 
 def admin_menu_keyboard():
     keyboard = [
+        [InlineKeyboardButton("🎬 Kino qo'shish", callback_data="admin_addmovie")],
+        [InlineKeyboardButton("⭐ Premium kino qo'shish", callback_data="admin_addpremium")],
         [InlineKeyboardButton("📊 Statistika", callback_data="admin_stats")],
-        [InlineKeyboardButton("🎬 Kinolar ro'yxati", callback_data="admin_movies")],
+        [InlineKeyboardButton("📚 Kinolar ro'yxati", callback_data="admin_movies")],
         [InlineKeyboardButton("📢 Xabar yuborish", callback_data="admin_broadcast")],
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -191,9 +193,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "🛠 Admin panel\n\n"
-        "Kino qo'shish: video xabarga reply qilib /add <kod>\n"
-        "Premium kino qo'shish: video xabarga reply qilib /addpremium <kod>",
+        "🛠 Admin panel",
         reply_markup=admin_menu_keyboard(),
     )
 
@@ -204,6 +204,30 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_admin(query.from_user.id):
         await query.edit_message_text("Sizda ruxsat yo'q ❌")
+        return
+
+    if query.data == "admin_addmovie":
+        awaiting_movie_code[query.from_user.id] = 0
+        keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="admin_cancel_addmovie")]]
+        await query.edit_message_text(
+            "🎬 Yangi (oddiy) kino qo'shish.\n\nKino kodini yuboring (masalan: 1):",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if query.data == "admin_addpremium":
+        awaiting_movie_code[query.from_user.id] = 1
+        keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="admin_cancel_addmovie")]]
+        await query.edit_message_text(
+            "⭐ Yangi Premium kino qo'shish.\n\nKino kodini yuboring (masalan: 1):",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if query.data == "admin_cancel_addmovie":
+        awaiting_movie_code.pop(query.from_user.id, None)
+        awaiting_movie_video.pop(query.from_user.id, None)
+        await query.edit_message_text("Bekor qilindi.", reply_markup=admin_menu_keyboard())
         return
 
     if query.data == "admin_stats":
@@ -419,8 +443,84 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _store_movie_message(context: ContextTypes.DEFAULT_TYPE, source_message, code: int, premium: int):
+    """
+    Berilgan xabar (video/fayl/rasm)ni kinolar kanaliga saqlaydi va bazaga yozadi.
+    Qaytaradi: (success: bool, xabar matni)
+    """
+    forwarded = None
+    label = "Premium kino" if premium else "Kino"
+
+    # 0-urinish: agar bu xabar kinolar kanalidan forward qilingan bo'lsa
+    origin_chat = getattr(source_message, "forward_from_chat", None)
+    origin_message_id = getattr(source_message, "forward_from_message_id", None)
+
+    if origin_chat is None:
+        forward_origin = getattr(source_message, "forward_origin", None)
+        if forward_origin is not None:
+            origin_chat = getattr(forward_origin, "chat", None)
+            origin_message_id = getattr(forward_origin, "message_id", None)
+
+    if origin_chat is not None and origin_chat.id == CHANNEL_ID and origin_message_id:
+        cur.execute(
+            "INSERT OR REPLACE INTO movies (code, message_id, premium) VALUES (?, ?, ?)",
+            (code, origin_message_id, premium),
+        )
+        conn.commit()
+        return True, f"✅ {label} {code}-kod bilan saqlandi! (katta fayl usuli)"
+
+    # 1-urinish: copy_message
+    try:
+        forwarded = await context.bot.copy_message(
+            chat_id=CHANNEL_ID,
+            from_chat_id=source_message.chat_id,
+            message_id=source_message.message_id,
+        )
+    except Exception as e:
+        logging.warning(f"copy_message ishlamadi, file_id orqali sinaymiz: {e}")
+
+    # 2-urinish: file_id orqali qayta yuborish
+    if forwarded is None:
+        try:
+            caption = source_message.caption or None
+            if source_message.video:
+                forwarded = await context.bot.send_video(
+                    chat_id=CHANNEL_ID, video=source_message.video.file_id, caption=caption
+                )
+            elif source_message.document:
+                forwarded = await context.bot.send_document(
+                    chat_id=CHANNEL_ID, document=source_message.document.file_id, caption=caption
+                )
+            elif source_message.animation:
+                forwarded = await context.bot.send_animation(
+                    chat_id=CHANNEL_ID, animation=source_message.animation.file_id, caption=caption
+                )
+            elif source_message.photo:
+                forwarded = await context.bot.send_photo(
+                    chat_id=CHANNEL_ID, photo=source_message.photo[-1].file_id, caption=caption
+                )
+        except Exception as e:
+            logging.error(f"Kino qo'shishda xato (file_id usuli ham ishlamadi): {e}")
+            return False, (
+                "❌ Kinoni saqlab bo'lmadi. Agar fayl 50MB dan katta bo'lsa: "
+                "videoni to'g'ridan-to'g'ri kinolar kanaliga qo'lda yuklang, so'ng o'sha "
+                "kanal xabarini botga forward qilib qayta urinib ko'ring."
+            )
+
+    if forwarded is None:
+        return False, "❌ Bu xabar turi qo'llab-quvvatlanmaydi. Video, fayl yoki rasm yuboring."
+
+    cur.execute(
+        "INSERT OR REPLACE INTO movies (code, message_id, premium) VALUES (?, ?, ?)",
+        (code, forwarded.message_id, premium),
+    )
+    conn.commit()
+
+    return True, f"✅ {label} {code}-kod bilan saqlandi!"
+
+
 async def _save_movie_from_reply(update: Update, context: ContextTypes.DEFAULT_TYPE, premium: int):
-    """Kino qo'shishning umumiy logikasi. premium=0 -> oddiy, premium=1 -> faqat Premium uchun"""
+    """/add va /addpremium buyruqlari uchun: video xabarga reply qilib kod bilan qo'shish"""
     user_id = update.effective_user.id
     cmd_name = "/addpremium" if premium else "/add"
 
@@ -430,7 +530,8 @@ async def _save_movie_from_reply(update: Update, context: ContextTypes.DEFAULT_T
 
     if not update.message.reply_to_message:
         await update.message.reply_text(
-            f"Video xabariga reply qilib {cmd_name} <kod> deb yozing.\nMasalan: {cmd_name} 1"
+            f"Video xabariga reply qilib {cmd_name} <kod> deb yozing.\nMasalan: {cmd_name} 1\n\n"
+            "Yoki 🛠 Admin panel tugmasidan tugma orqali ham qo'sha olasiz."
         )
         return
 
@@ -444,81 +545,8 @@ async def _save_movie_from_reply(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Kod raqam bo'lishi kerak!")
         return
 
-    replied = update.message.reply_to_message
-    forwarded = None
-    label = "Premium kino" if premium else "Kino"
-
-    # 0-urinish: agar bu xabar kinolar kanalidan forward qilingan bo'lsa
-    origin_chat = getattr(replied, "forward_from_chat", None)
-    origin_message_id = getattr(replied, "forward_from_message_id", None)
-
-    if origin_chat is None:
-        forward_origin = getattr(replied, "forward_origin", None)
-        if forward_origin is not None:
-            origin_chat = getattr(forward_origin, "chat", None)
-            origin_message_id = getattr(forward_origin, "message_id", None)
-
-    if origin_chat is not None and origin_chat.id == CHANNEL_ID and origin_message_id:
-        cur.execute(
-            "INSERT OR REPLACE INTO movies (code, message_id, premium) VALUES (?, ?, ?)",
-            (code, origin_message_id, premium),
-        )
-        conn.commit()
-        await update.message.reply_text(f"✅ {label} {code}-kod bilan saqlandi! (katta fayl usuli)")
-        return
-
-    # 1-urinish: copy_message
-    try:
-        forwarded = await context.bot.copy_message(
-            chat_id=CHANNEL_ID,
-            from_chat_id=update.effective_chat.id,
-            message_id=replied.message_id,
-        )
-    except Exception as e:
-        logging.warning(f"copy_message ishlamadi, file_id orqali sinaymiz: {e}")
-
-    # 2-urinish: file_id orqali qayta yuborish
-    if forwarded is None:
-        try:
-            caption = replied.caption or None
-            if replied.video:
-                forwarded = await context.bot.send_video(
-                    chat_id=CHANNEL_ID, video=replied.video.file_id, caption=caption
-                )
-            elif replied.document:
-                forwarded = await context.bot.send_document(
-                    chat_id=CHANNEL_ID, document=replied.document.file_id, caption=caption
-                )
-            elif replied.animation:
-                forwarded = await context.bot.send_animation(
-                    chat_id=CHANNEL_ID, animation=replied.animation.file_id, caption=caption
-                )
-            elif replied.photo:
-                forwarded = await context.bot.send_photo(
-                    chat_id=CHANNEL_ID, photo=replied.photo[-1].file_id, caption=caption
-                )
-        except Exception as e:
-            logging.error(f"Kino qo'shishda xato (file_id usuli ham ishlamadi): {e}")
-            await update.message.reply_text(
-                "❌ Kinoni saqlab bo'lmadi. Agar fayl 50MB dan katta bo'lsa: "
-                "videoni to'g'ridan-to'g'ri kinolar kanaliga qo'lda yuklang, so'ng o'sha "
-                f"kanal xabarini botga forward qilib, shunga Reply qilib {cmd_name} yozing."
-            )
-            return
-
-    if forwarded is None:
-        await update.message.reply_text(
-            "❌ Bu xabar turi qo'llab-quvvatlanmaydi. Video, fayl yoki rasm yuboring."
-        )
-        return
-
-    cur.execute(
-        "INSERT OR REPLACE INTO movies (code, message_id, premium) VALUES (?, ?, ?)",
-        (code, forwarded.message_id, premium),
-    )
-    conn.commit()
-
-    await update.message.reply_text(f"✅ {label} {code}-kod bilan saqlandi!")
+    success, text = await _store_movie_message(context, update.message.reply_to_message, code, premium)
+    await update.message.reply_text(text)
 
 
 async def add_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -589,6 +617,23 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(update.effective_user)
 
     user_id = update.effective_user.id
+
+    # Agar admin hozir "kino qo'shish" tugmasidan keyin kod kiritish rejimida bo'lsa
+    if user_id in awaiting_movie_code and is_admin(user_id):
+        text_code = (update.message.text or "").strip()
+        try:
+            code = int(text_code)
+        except ValueError:
+            await update.message.reply_text("Kod raqam bo'lishi kerak! Qaytadan kiriting:")
+            return
+
+        premium = awaiting_movie_code.pop(user_id)
+        awaiting_movie_video[user_id] = (code, premium)
+        label = "Premium kino" if premium else "Kino"
+        await update.message.reply_text(
+            f"✅ Kod qabul qilindi: {code}\n\n🎬 Endi {label} uchun video yoki faylni shu yerga yuboring."
+        )
+        return
 
     # Agar admin hozir "xabar yuborish" rejimida bo'lsa
     if user_id in awaiting_broadcast and is_admin(user_id):
@@ -662,8 +707,15 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin broadcast rejimida rasm/video/fayl yuborsa, yoki foydalanuvchi Premium chek yuborsa"""
+    """Admin broadcast/kino qo'shish rejimida media yuborsa, yoki foydalanuvchi Premium chek yuborsa"""
     user_id = update.effective_user.id
+
+    # Admin tugma orqali kino qo'shish oqimida video/fayl yuborsa
+    if user_id in awaiting_movie_video and is_admin(user_id):
+        code, premium = awaiting_movie_video.pop(user_id)
+        success, text = await _store_movie_message(context, update.message, code, premium)
+        await update.message.reply_text(text)
+        return
 
     if user_id in awaiting_broadcast and is_admin(user_id):
         await do_broadcast(update, context)
