@@ -74,6 +74,8 @@ for stmt in [
 # Vaqtinchalik holatlar
 awaiting_broadcast = set()   # kim "Xabar yuborish" bosgan (admin)
 awaiting_receipt = set()     # kim Premium chek yuborishi kutilmoqda
+awaiting_movie_code = {}     # user_id -> premium (0/1): admin tugma orqali kod kiritishi kutilmoqda
+awaiting_movie_video = {}    # user_id -> (code, premium): admin video/fayl yuborishi kutilmoqda
 
 MAIN_MENU_SEARCH = "🔍 Kino qidirish"
 MAIN_MENU_LIST = "📚 Kinolar ro'yxati"
