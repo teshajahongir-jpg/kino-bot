@@ -659,6 +659,22 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⭐ Premium kino qo'shish.\n\nKino kodini yuboring (masalan: 1):")
         return
 
+    # Premium tarif haqida ma'lumot — obuna bo'lmasa ham ko'rish mumkin
+    if text == MAIN_MENU_PREMIUM:
+        await send_premium_info(update, context)
+        return
+
+    # Majburiy obuna tekshiruvi (adminlar va Premium foydalanuvchilar uchun shart emas)
+    # MUHIM: bu tekshiruv pastdagi barcha menyu tugmalaridan OLDIN turishi kerak,
+    # aks holda "Kinolar ro'yxati" / "Eng ko'p ko'rilgan" kabi tugmalar orqali chetlab o'tiladi.
+    if not is_admin(user_id) and not is_premium(user_id) and not await is_subscribed(context, user_id):
+        await update.message.reply_text(
+            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
+            "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
+            reply_markup=subscribe_keyboard(),
+        )
+        return
+
     if text == MAIN_MENU_LIST:
         await show_movies_list(update, context)
         return
@@ -669,19 +685,6 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == MAIN_MENU_TOP:
         await show_top_movies(update, context)
-        return
-
-    if text == MAIN_MENU_PREMIUM:
-        await send_premium_info(update, context)
-        return
-
-    # Majburiy obuna tekshiruvi (adminlar va Premium foydalanuvchilar uchun shart emas)
-    if not is_admin(user_id) and not is_premium(user_id) and not await is_subscribed(context, user_id):
-        await update.message.reply_text(
-            "Botdan foydalanish uchun avval kanalimizga qo'shiling, "
-            "so'ng '✅ Obuna bo'ldim' tugmasini bosing.",
-            reply_markup=subscribe_keyboard(),
-        )
         return
 
     if not text.isdigit():
