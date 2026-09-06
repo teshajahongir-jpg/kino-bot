@@ -26,9 +26,10 @@ BOT_TOKEN = "8790540529:AAHbCcuCBJVW-kbLM5FvbmXvwMAfa8B9yx4"        # @BotFather
 
 ADMIN_IDS = [8252424738, 2049500709]        # adminlarning ID'lari
 
-CHANNEL_ID = -1002727313975                 # kinolar SAQLANADIGAN yopiq kanal ID
+CHANNEL_ID = -1004378756719                 # kinolar SAQLANADIGAN yopiq kanal ID
 
-FORCE_SUB_CHANNEL = "@kadamkh"              # majburiy OBUNA kanali
+FORCE_SUB_CHANNEL = -1002727313975          # majburiy OBUNA kanali (maxfiy kanal ID'si)
+FORCE_SUB_INVITE_LINK = "https://t.me/+u_aFK5ojuGg5NTAy"   # kanalga qo'shilish uchun taklif havolasi
 
 PREMIUM_CARD_NUMBER = "5614 6821 1353 0267"
 PREMIUM_PRICE_TEXT = "15 000 so'm / oy"
@@ -152,9 +153,8 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
 
 
 def subscribe_keyboard():
-    channel_username = FORCE_SUB_CHANNEL.lstrip("@")
     keyboard = [
-        [InlineKeyboardButton("📢 Kanalga qo'shilish", url=f"https://t.me/{channel_username}")],
+        [InlineKeyboardButton("📢 Kanalga qo'shilish", url=FORCE_SUB_INVITE_LINK)],
         [InlineKeyboardButton("✅ Obuna bo'ldim", callback_data="check_sub")],
     ]
     return InlineKeyboardMarkup(keyboard)
