@@ -26,7 +26,7 @@ BOT_TOKEN = "8790540529:AAHbCcuCBJVW-kbLM5FvbmXvwMAfa8B9yx4"        # @BotFather
 
 ADMIN_IDS = [8252424738, 2049500709]        # adminlarning ID'lari
 
-CHANNEL_ID = -1004378756719                 # kinolar SAQLANADIGAN yopiq kanal ID
+CHANNEL_ID = -1002727313975                 # kinolar SAQLANADIGAN yopiq kanal ID
 
 FORCE_SUB_CHANNEL = "@kadamkh"              # majburiy OBUNA kanali
 
