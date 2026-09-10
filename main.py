@@ -16,13 +16,14 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    ChatJoinRequestHandler,
     filters,
 )
 
 # ======================================================================
 # SOZLAMALAR — shu qatorlarni o'zingiznikiga almashtiring
 # ======================================================================
-BOT_TOKEN = "8790540529:AAHbCcuCBJVW-kbLM5FvbmXvwMAfa8B9yx4"        # @BotFather bergan token
+BOT_TOKEN = ""        # @BotFather bergan token
 
 ADMIN_IDS = [8252424738, 2049500709]        # adminlarning ID'lari
 
@@ -77,6 +78,8 @@ awaiting_broadcast = set()   # kim "Xabar yuborish" bosgan (admin)
 awaiting_receipt = set()     # kim Premium chek yuborishi kutilmoqda
 awaiting_movie_code = {}     # user_id -> premium (0/1): admin tugma orqali kod kiritishi kutilmoqda
 awaiting_movie_video = {}    # user_id -> (code, premium): admin video/fayl yuborishi kutilmoqda
+awaiting_delete_code = set() # kim "Kino o'chirish" bosgan (admin), kod kutilmoqda
+awaiting_premium_id = set()  # kim "Premium berish" bosgan (admin), user ID kutilmoqda
 
 MAIN_MENU_SEARCH = "🔍 Kino qidirish"
 MAIN_MENU_LIST = "📚 Kinolar ro'yxati"
@@ -152,6 +155,19 @@ async def is_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> boo
     return True
 
 
+async def approve_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """FORCE_SUB_CHANNEL uchun kelgan qo'shilish so'rovlarini avtomatik tasdiqlaydi."""
+    request = update.chat_join_request
+    if request.chat.id != FORCE_SUB_CHANNEL:
+        return
+    try:
+        await context.bot.approve_chat_join_request(
+            chat_id=request.chat.id, user_id=request.from_user.id
+        )
+    except Exception as e:
+        logging.error(f"Qo'shilish so'rovini tasdiqlashda xato: {e}")
+
+
 def subscribe_keyboard():
     keyboard = [
         [InlineKeyboardButton("📢 Kanalga qo'shilish", url=FORCE_SUB_INVITE_LINK)],
@@ -183,6 +199,8 @@ def admin_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton("🎬 Kino qo'shish", callback_data="admin_addmovie")],
         [InlineKeyboardButton("⭐ Premium kino qo'shish", callback_data="admin_addpremium")],
+        [InlineKeyboardButton("🗑 Kino o'chirish", callback_data="admin_deletemovie")],
+        [InlineKeyboardButton("🎟 Premium berish", callback_data="admin_grantpremium")],
         [InlineKeyboardButton("📊 Statistika", callback_data="admin_stats")],
         [InlineKeyboardButton("📚 Kinolar ro'yxati", callback_data="admin_movies")],
         [InlineKeyboardButton("📢 Xabar yuborish", callback_data="admin_broadcast")],
@@ -230,6 +248,34 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "admin_cancel_addmovie":
         awaiting_movie_code.pop(query.from_user.id, None)
         awaiting_movie_video.pop(query.from_user.id, None)
+        await query.edit_message_text("Bekor qilindi.", reply_markup=admin_menu_keyboard())
+        return
+
+    if query.data == "admin_deletemovie":
+        awaiting_delete_code.add(query.from_user.id)
+        keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="admin_cancel_delete")]]
+        await query.edit_message_text(
+            "🗑 O'chirmoqchi bo'lgan kino kodini yuboring:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if query.data == "admin_cancel_delete":
+        awaiting_delete_code.discard(query.from_user.id)
+        await query.edit_message_text("Bekor qilindi.", reply_markup=admin_menu_keyboard())
+        return
+
+    if query.data == "admin_grantpremium":
+        awaiting_premium_id.add(query.from_user.id)
+        keyboard = [[InlineKeyboardButton("❌ Bekor qilish", callback_data="admin_cancel_grantpremium")]]
+        await query.edit_message_text(
+            "🎟 Premium bermoqchi bo'lgan foydalanuvchining Telegram ID'sini yuboring:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if query.data == "admin_cancel_grantpremium":
+        awaiting_premium_id.discard(query.from_user.id)
         await query.edit_message_text("Bekor qilindi.", reply_markup=admin_menu_keyboard())
         return
 
@@ -394,6 +440,24 @@ async def handle_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
+async def _grant_premium_core(context: ContextTypes.DEFAULT_TYPE, target_id: int) -> str:
+    """Premium berish uchun umumiy funksiya. /premium buyrug'i va tugma orqali ishlatiladi."""
+    set_premium(target_id, 1)
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "🎉 Tabriklaymiz! Sizga Premium tarif faollashtirildi.\n"
+                "Endi reklamalarsiz, majburiy obunasiz va maxsus Premium kinolarni ko'rishingiz mumkin."
+            ),
+        )
+    except Exception as e:
+        logging.error(f"Foydalanuvchiga xabar berishda xato: {e}")
+
+    return f"✅ {target_id} endi Premium foydalanuvchi!"
+
+
 async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/premium <user_id> — faqat admin, foydalanuvchiga Premium beradi"""
     if not is_admin(update.effective_user.id):
@@ -410,19 +474,8 @@ async def grant_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ID raqam bo'lishi kerak!")
         return
 
-    set_premium(target_id, 1)
-    await update.message.reply_text(f"✅ {target_id} endi Premium foydalanuvchi!")
-
-    try:
-        await context.bot.send_message(
-            chat_id=target_id,
-            text=(
-                "🎉 Tabriklaymiz! Sizga Premium tarif faollashtirildi.\n"
-                "Endi reklamalarsiz, majburiy obunasiz va maxsus Premium kinolarni ko'rishingiz mumkin."
-            ),
-        )
-    except Exception as e:
-        logging.error(f"Foydalanuvchiga xabar berishda xato: {e}")
+    result_text = await _grant_premium_core(context, target_id)
+    await update.message.reply_text(result_text)
 
 
 # ==== ODDIY HANDLERLAR ====
@@ -562,6 +615,13 @@ async def add_premium_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _save_movie_from_reply(update, context, premium=1)
 
 
+def _delete_movie_core(code: int) -> str:
+    """Kino o'chirish uchun umumiy funksiya. /delete buyrug'i va tugma orqali ishlatiladi."""
+    cur.execute("DELETE FROM movies WHERE code=?", (code,))
+    conn.commit()
+    return f"🗑 {code}-kod o'chirildi."
+
+
 async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/delete <kod> — faqat admin"""
     if not is_admin(update.effective_user.id):
@@ -578,9 +638,8 @@ async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kod raqam bo'lishi kerak!")
         return
 
-    cur.execute("DELETE FROM movies WHERE code=?", (code,))
-    conn.commit()
-    await update.message.reply_text(f"🗑 {code}-kod o'chirildi.")
+    result_text = _delete_movie_core(code)
+    await update.message.reply_text(result_text)
 
 
 async def show_movies_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -641,6 +700,34 @@ async def send_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Agar admin hozir "xabar yuborish" rejimida bo'lsa
     if user_id in awaiting_broadcast and is_admin(user_id):
         await do_broadcast(update, context)
+        return
+
+    # Agar admin hozir "kino o'chirish" tugmasidan keyin kod kiritish rejimida bo'lsa
+    if user_id in awaiting_delete_code and is_admin(user_id):
+        text_code = (update.message.text or "").strip()
+        try:
+            code = int(text_code)
+        except ValueError:
+            await update.message.reply_text("Kod raqam bo'lishi kerak! Qaytadan kiriting:")
+            return
+
+        awaiting_delete_code.discard(user_id)
+        result_text = _delete_movie_core(code)
+        await update.message.reply_text(result_text, reply_markup=admin_menu_keyboard())
+        return
+
+    # Agar admin hozir "Premium berish" tugmasidan keyin ID kiritish rejimida bo'lsa
+    if user_id in awaiting_premium_id and is_admin(user_id):
+        text_id = (update.message.text or "").strip()
+        try:
+            target_id = int(text_id)
+        except ValueError:
+            await update.message.reply_text("ID raqam bo'lishi kerak! Qaytadan kiriting:")
+            return
+
+        awaiting_premium_id.discard(user_id)
+        result_text = await _grant_premium_core(context, target_id)
+        await update.message.reply_text(result_text, reply_markup=admin_menu_keyboard())
         return
 
     text = (update.message.text or "").strip()
@@ -776,6 +863,7 @@ def main():
     app.add_handler(CommandHandler("premium", grant_premium))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(check_sub_callback, pattern="^check_sub$"))
+    app.add_handler(ChatJoinRequestHandler(approve_join_request))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_movie))
     app.add_handler(
         MessageHandler(
