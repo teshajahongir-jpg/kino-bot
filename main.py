@@ -23,7 +23,7 @@ from telegram.ext import (
 # ======================================================================
 # SOZLAMALAR — shu qatorlarni o'zingiznikiga almashtiring
 # ======================================================================
-BOT_TOKEN = ""        # @BotFather bergan token
+BOT_TOKEN = "8790540529:AAHbCcuCBJVW-kbLM5FvbmXvwMAfa8B9yx4"        # @BotFather bergan token
 
 ADMIN_IDS = [8252424738, 2049500709]        # adminlarning ID'lari
 
