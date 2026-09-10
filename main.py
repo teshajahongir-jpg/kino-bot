@@ -29,7 +29,7 @@ ADMIN_IDS = [8252424738, 2049500709]        # adminlarning ID'lari
 CHANNEL_ID = -1004378756719                 # kinolar SAQLANADIGAN yopiq kanal ID
 
 FORCE_SUB_CHANNEL = -1002727313975          # majburiy OBUNA kanali (maxfiy kanal ID'si)
-FORCE_SUB_INVITE_LINK = "https://t.me/+u_aFK5ojuGg5NTAy"   # kanalga qo'shilish uchun taklif havolasi
+FORCE_SUB_INVITE_LINK = "https://t.me/+UQDluFPS2-dlYzYy"   # kanalga qo'shilish uchun taklif havolasi
 
 PREMIUM_CARD_NUMBER = "5614 6821 1353 0267"
 PREMIUM_PRICE_TEXT = "15 000 so'm / oy"
